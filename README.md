@@ -1,3 +1,5 @@
+![Yamdb Workflow Status](https://github.com/Boroda23/yamdb_final/actions/workflows/yamdb_workflow.yml/badge.svg?branch=master&event=push)
+
 Проект развернут по адресу: http://localhost:8000/redoc/
 ## Описание 
  
@@ -252,4 +254,4 @@ DB_PORT=5432
 ### Документация API YaMDb 
 Документация доступна по эндпойнту: http://localhost:8000/redoc/
 
-### Автор: [Дмитрий Клепиков](https://github.com/Boroda23) :+1:
+### Автор: [Николаев Антон](https://github.com/Boroda23) :+1:
