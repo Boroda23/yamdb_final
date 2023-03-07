@@ -10,10 +10,11 @@ SECRET_KEY = (
     os.getenv('SECRET_KEY'),
     'my_mega_secret_code_ilz@4zqj=rq&agdol^##zgl9(vs')
 
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = [
     '62.84.115.143',
+    '0.0.0.0',
     'localhost',
     '127.0.0.1',
     'Boroda23.sytes.net',
@@ -72,7 +73,7 @@ DATABASES = {
     'default': {
         'ENGINE': os.getenv('DB_ENGINE',
                             default='django.db.backends.postgresql'),
-        'NAME': os.getenv('DB_NAME'),
+        'NAME': os.getenv('POSTGRES_DB'),
         'USER': os.getenv('POSTGRES_USER'),
         'PASSWORD': os.getenv('POSTGRES_PASSWORD'),
         'HOST': os.getenv('DB_HOST'),
