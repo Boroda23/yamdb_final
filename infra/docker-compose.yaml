@@ -6,7 +6,6 @@ volumes:
   database:
 
 services:
-
   db:
     image: postgres:13.0-alpine
     volumes:
@@ -14,8 +13,9 @@ services:
     env_file:
       - ./.env
     restart: always
+
   web:
-    build: ../api_yamdb
+    image: boroda23/apiyamdb:latest
     volumes:
       - static_value:/app/static/
       - media_value:/app/media/
