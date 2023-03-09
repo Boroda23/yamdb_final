@@ -1,212 +1,196 @@
-from django.contrib.auth.tokens import default_token_generator
+from api.v1.filters import TitleFilter
+from django.core.mail import EmailMessage
 from django.db.models import Avg
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters, mixins, permissions, status, viewsets
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework.views import APIView
+from rest_framework.viewsets import ModelViewSet
+from rest_framework_simplejwt.tokens import RefreshToken
+from reviews.models import Category, Genre, Review, Title, User
 
-from reviews.models import Category, Genre, Review, Title
-from users.models import User
-
-from .filters import TitleFilter
-from .mixins import CreateListDestroyViewSet
-from .permissions import (
-    AnonimReadOnly,
-    IsSuperUserIsAdminIsModeratorIsAuthor,
-    IsSuperUserOrIsAdminOnly
-)
-from .serializers import (
-    CategorySerializer, CommentSerializer,
-    GenreSerializer, ReviewSerializer,
-    TitleGETSerializer, TitleSerializer,
-    UserCreateSerializer, UserRecieveTokenSerializer,
-    UserSerializer
-)
-from .utils import send_confirmation_code
+from .mixins import ModelMixinSet
+from .permissions import (AdminModeratorAuthorPermission, AdminOnly,
+                          IsAdminUserOrReadOnly)
+from .serializers import (CategorySerializer, CommentSerializer,
+                          GenreSerializer, GetTokenSerializer,
+                          NotAdminSerializer, ReviewSerializer,
+                          SignUpSerializer, TitleReadSerializer,
+                          TitleWriteSerializer, UsersSerializer)
 
 
-class UserCreateViewSet(mixins.CreateModelMixin,
-                        viewsets.GenericViewSet):
-    """Вьюсет для создания обьектов класса User."""
-
+class UsersViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
-    serializer_class = UserCreateSerializer
-    permission_classes = (permissions.AllowAny,)
-
-    def create(self, request):
-        """Создает объект класса User и
-        отправляет на почту пользователя код подтверждения."""
-        serializer = UserCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user, _ = User.objects.get_or_create(**serializer.validated_data)
-        confirmation_code = default_token_generator.make_token(user)
-        send_confirmation_code(
-            email=user.email,
-            confirmation_code=confirmation_code
-        )
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-class UserReceiveTokenViewSet(mixins.CreateModelMixin,
-                              viewsets.GenericViewSet):
-    """Вьюсет для получения пользователем JWT токена."""
-
-    queryset = User.objects.all()
-    serializer_class = UserRecieveTokenSerializer
-    permission_classes = (permissions.AllowAny,)
-
-    def create(self, request, *args, **kwargs):
-        """Предоставляет пользователю JWT токен по коду подтверждения."""
-        serializer = UserRecieveTokenSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        username = serializer.validated_data.get('username')
-        confirmation_code = serializer.validated_data.get('confirmation_code')
-        user = get_object_or_404(User, username=username)
-
-        if not default_token_generator.check_token(user, confirmation_code):
-            message = {'confirmation_code': 'Код подтверждения невалиден'}
-            return Response(message, status=status.HTTP_400_BAD_REQUEST)
-        message = {'token': str(AccessToken.for_user(user))}
-        return Response(message, status=status.HTTP_200_OK)
-
-
-class UserViewSet(mixins.ListModelMixin,
-                  mixins.CreateModelMixin,
-                  viewsets.GenericViewSet):
-    """Вьюсет для обьектов модели User."""
-
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
-    permission_classes = (IsSuperUserOrIsAdminOnly,)
-    filter_backends = (filters.SearchFilter,)
-    search_fields = ('username',)
+    serializer_class = UsersSerializer
+    permission_classes = (IsAuthenticated, AdminOnly,)
+    lookup_field = 'username'
+    filter_backends = (SearchFilter, )
+    search_fields = ('username', )
 
     @action(
+        methods=['GET', 'PATCH'],
         detail=False,
-        methods=['get', 'patch', 'delete'],
-        url_path=r'(?P<username>[\w.@+-]+)',
-        url_name='get_user'
-    )
-    def get_user_by_username(self, request, username):
-        """Обеспечивает получание данных пользователя по его username и
-        управление ими."""
-        user = get_object_or_404(User, username=username)
+        permission_classes=(IsAuthenticated,),
+        url_path='me')
+    def get_current_user_info(self, request):
+        serializer = UsersSerializer(request.user)
         if request.method == 'PATCH':
-            serializer = UserSerializer(user, data=request.data, partial=True)
+            if request.user.is_admin:
+                serializer = UsersSerializer(
+                    request.user,
+                    data=request.data,
+                    partial=True)
+            else:
+                serializer = NotAdminSerializer(
+                    request.user,
+                    data=request.data,
+                    partial=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        elif request.method == 'DELETE':
-            user.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        serializer = UserSerializer(user)
+        return Response(serializer.data)
+
+
+class APIGetToken(APIView):
+    """
+    Получение JWT-токена в обмен на username и confirmation code.
+    Права доступа: Доступно без токена. Пример тела запроса:
+    {
+        "username": "string",
+        "confirmation_code": "string"
+    }
+    """
+    def post(self, request):
+        serializer = GetTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            return Response(
+                {'username': 'Пользователь не найден!'},
+                status=status.HTTP_404_NOT_FOUND)
+        if data.get('confirmation_code') == user.confirmation_code:
+            token = RefreshToken.for_user(user).access_token
+            return Response({'token': str(token)},
+                            status=status.HTTP_201_CREATED)
+        return Response(
+            {'confirmation_code': 'Неверный код подтверждения!'},
+            status=status.HTTP_400_BAD_REQUEST)
+
+
+class APISignup(APIView):
+    """
+    Получить код подтверждения на переданный email. Права доступа: Доступно без
+    токена. Использовать имя 'me' в качестве username запрещено. Поля email и
+    username должны быть уникальными. Пример тела запроса:
+    {
+        "email": "string",
+        "username": "string"
+    }
+    """
+    permission_classes = (permissions.AllowAny,)
+
+    @staticmethod
+    def send_email(data):
+        email = EmailMessage(
+            subject=data['email_subject'],
+            body=data['email_body'],
+            to=[data['to_email']]
+        )
+        email.send()
+
+    def post(self, request):
+        serializer = SignUpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        email_body = (
+            f'Доброе время суток, {user.username}.'
+            f'\nКод подтвержения для доступа к API: {user.confirmation_code}'
+        )
+        data = {
+            'email_body': email_body,
+            'to_email': user.email,
+            'email_subject': 'Код подтвержения для доступа к API!'
+        }
+        self.send_email(data)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(
-        detail=False,
-        methods=['get', 'patch'],
-        url_path='me',
-        url_name='me',
-        permission_classes=(permissions.IsAuthenticated,)
-    )
-    def get_me_data(self, request):
-        """Позволяет пользователю получить подробную информацию о себе
-        и редактировать её."""
-        if request.method == 'PATCH':
-            serializer = UserSerializer(
-                request.user, data=request.data,
-                partial=True, context={'request': request}
-            )
-            serializer.is_valid(raise_exception=True)
-            # serializer.save()
-            serializer.save(role=request.user.role)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        serializer = UserSerializer(request.user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
-
-class CategoryViewSet(CreateListDestroyViewSet):
-    """Вьюсет для создания обьектов класса Category."""
-
+class CategoryViewSet(ModelMixinSet):
+    """
+    Получить список всех категорий. Права доступа: Доступно без токена
+    """
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = (IsAdminUserOrReadOnly,)
+    filter_backends = (SearchFilter, )
+    search_fields = ('name', )
+    lookup_field = 'slug'
 
 
-class GenreViewSet(CreateListDestroyViewSet):
-    """Вьюсет для создания обьектов класса Genre."""
-
+class GenreViewSet(ModelMixinSet):
+    """
+    Получить список всех жанров. Права доступа: Доступно без токена
+    """
     queryset = Genre.objects.all()
     serializer_class = GenreSerializer
+    permission_classes = (IsAdminUserOrReadOnly,)
+    filter_backends = (SearchFilter,)
+    search_fields = ('name', )
+    lookup_field = 'slug'
 
 
-class TitleViewSet(viewsets.ModelViewSet):
-    """Вьюсет для создания обьектов класса Title."""
-
-    queryset = Title.objects.annotate(rating=Avg('reviews__score'))
-    serializer_class = TitleSerializer
-    permission_classes = (AnonimReadOnly | IsSuperUserOrIsAdminOnly,)
-    filter_backends = (DjangoFilterBackend,)
+class TitleViewSet(ModelViewSet):
+    """
+    Получить список всех объектов. Права доступа: Доступно без токена
+    """
+    queryset = Title.objects.annotate(
+        rating=Avg('reviews__score')
+    ).all()
+    permission_classes = (IsAdminUserOrReadOnly,)
+    filter_backends = (DjangoFilterBackend, )
     filterset_class = TitleFilter
 
     def get_serializer_class(self):
-        """Определяет какой сериализатор будет использоваться
-        для разных типов запроса."""
-        if self.request.method == 'GET':
-            return TitleGETSerializer
-        return TitleSerializer
-
-
-class ReviewViewSet(viewsets.ModelViewSet):
-    """Вьюсет для обьектов модели Review."""
-
-    serializer_class = ReviewSerializer
-    permission_classes = (
-        permissions.IsAuthenticatedOrReadOnly,
-        IsSuperUserIsAdminIsModeratorIsAuthor
-    )
-
-    def get_title(self):
-        """Возвращает объект текущего произведения."""
-        title_id = self.kwargs.get('title_id')
-        return get_object_or_404(Title, pk=title_id)
-
-    def get_queryset(self):
-        """Возвращает queryset c отзывами для текущего произведения."""
-        return self.get_title().reviews.all()
-
-    def perform_create(self, serializer):
-        """Создает отзыв для текущего произведения,
-        где автором является текущий пользователь."""
-        serializer.save(
-            author=self.request.user,
-            title=self.get_title()
-        )
+        if self.action in ('list', 'retrieve'):
+            return TitleReadSerializer
+        return TitleWriteSerializer
 
 
 class CommentViewSet(viewsets.ModelViewSet):
-    """Вьюсет для обьектов модели Comment."""
-
     serializer_class = CommentSerializer
-    permission_classes = (
-        permissions.IsAuthenticatedOrReadOnly,
-        IsSuperUserIsAdminIsModeratorIsAuthor
-    )
-
-    def get_review(self):
-        """Возвращает объект текущего отзыва."""
-        review_id = self.kwargs.get('review_id')
-        return get_object_or_404(Review, pk=review_id)
+    permission_classes = (AdminModeratorAuthorPermission,)
 
     def get_queryset(self):
-        """Возвращает queryset c комментариями для текущего отзыва."""
-        return self.get_review().comments.all()
+        review = get_object_or_404(
+            Review,
+            id=self.kwargs.get('review_id'))
+        return review.comments.all()
 
     def perform_create(self, serializer):
-        """Создает комментарий для текущего отзыва,
-        где автором является текущий пользователь."""
-        serializer.save(
-            author=self.request.user,
-            review=self.get_review()
-        )
+        review = get_object_or_404(
+            Review,
+            id=self.kwargs.get('review_id'))
+        serializer.save(author=self.request.user, review=review)
+
+
+class ReviewViewSet(viewsets.ModelViewSet):
+    serializer_class = ReviewSerializer
+    permission_classes = (AdminModeratorAuthorPermission,)
+
+    def get_queryset(self):
+        title = get_object_or_404(
+            Title,
+            id=self.kwargs.get('title_id'))
+        return title.reviews.all()
+
+    def perform_create(self, serializer):
+        title = get_object_or_404(
+            Title,
+            id=self.kwargs.get('title_id'))
+        serializer.save(author=self.request.user, title=title)

@@ -1,16 +1,13 @@
-from rest_framework import filters, mixins, viewsets
+from rest_framework import mixins, viewsets
+from rest_framework.mixins import (CreateModelMixin, DestroyModelMixin,
+                                   ListModelMixin)
+from rest_framework.viewsets import GenericViewSet
 
-from .permissions import AnonimReadOnly, IsSuperUserOrIsAdminOnly
+
+class ModelMixinSet(CreateModelMixin, ListModelMixin,
+                    DestroyModelMixin, GenericViewSet):
+    pass
 
 
-class CreateListDestroyViewSet(mixins.CreateModelMixin,
-                               mixins.ListModelMixin,
-                               mixins.DestroyModelMixin,
-                               viewsets.GenericViewSet):
-    """Вьюсет, позволяющий осуществлять GET, POST и DELETE запросы.
-    Поддерживает обработку адреса с динамической переменной slug."""
-
-    permission_classes = (AnonimReadOnly | IsSuperUserOrIsAdminOnly,)
-    filter_backends = (filters.SearchFilter,)
-    search_fields = ('name',)
-    lookup_field = 'slug'
+class CreateViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+    pass
