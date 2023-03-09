@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'users.apps.UsersConfig',
     'django_filters',
     'api.apps.ApiConfig',
     'reviews.apps.ReviewsConfig',
@@ -110,6 +111,9 @@ USE_TZ = False
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
+STATICFILES_DIRS = (os.path.join(BASE_DIR, 'staticfiles/'),)
+CSV_FILES_DIR = os.path.join(BASE_DIR, 'static/data')
+
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
@@ -146,3 +150,7 @@ EMAIL_USE_TLS = True
 EMAIL_USE_SSL = False
 
 AUTH_USER_MODEL = 'reviews.User'
+
+LENGTH_TEXT = 15
+LIST_PER_PAGE = 10
+EMAIL_YAMDB = 'registration_YaMDb@mail.com'
